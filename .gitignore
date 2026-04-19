@@ -1,0 +1,6 @@
+.Renviron
+data/raw/
+data/master_metros.rds
+.Rhistory
+.RData
+.Rproj.user/
