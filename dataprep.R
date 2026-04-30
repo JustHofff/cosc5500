@@ -1,6 +1,15 @@
-### ACS SECTION ###
+# Clean up environ
+rm(list = ls())
+
+# Import libraries
 library(tidycensus)
 library(tidyverse)
+library(tigris)
+library(sf)
+library(httr)
+library(readr)
+
+### ACS SECTION ###
 
 census_api_key(Sys.getenv("CENSUS_API_KEY"), install = FALSE)
 
@@ -46,10 +55,8 @@ acs_clean <- acs_raw %>%
 # Save checkpoint
 saveRDS(acs_clean, "data/raw/acs_clean.rds")
 
-
+dir.create("TEST")
 ### CBSA SECTION ###
-library(tigris)
-library(sf)
 
 options(tigris_use_cache = TRUE)
 
@@ -71,8 +78,6 @@ saveRDS(metros_sf, "data/raw/metros_sf.rds")
 
 
 ### BLS SECTION ###
-library(httr)
-library(readr)
 
 # BLS file of metro unemployment rates
 bls_url <- "https://www.bls.gov/web/metro/ssamatab1.txt"
@@ -154,6 +159,7 @@ saveRDS(metros_sf, "data/raw/metros_sf.rds")
 
 
 ### COMBINING SECTION ###
+
 # Scoring function
 scale01 <- function(x) {
   (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE)) * 100
