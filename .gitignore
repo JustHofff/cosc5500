@@ -5,6 +5,4 @@
 
 .Renviron
 
-data/raw/*
-!data/raw/.gitkeep
-data/master_metros.rds
+data/

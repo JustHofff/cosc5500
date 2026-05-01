@@ -9,6 +9,10 @@ library(sf)
 library(httr)
 library(readr)
 
+# Create data folders
+dir.create("data/raw", recursive = TRUE, showWarnings = FALSE)
+
+
 ### ACS SECTION ###
 
 census_api_key(Sys.getenv("CENSUS_API_KEY"), install = FALSE)
