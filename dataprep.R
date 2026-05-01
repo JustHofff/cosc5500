@@ -59,7 +59,6 @@ acs_clean <- acs_raw %>%
 # Save checkpoint
 saveRDS(acs_clean, "data/raw/acs_clean.rds")
 
-dir.create("TEST")
 ### CBSA SECTION ###
 
 options(tigris_use_cache = TRUE)
@@ -86,6 +85,7 @@ saveRDS(metros_sf, "data/raw/metros_sf.rds")
 # BLS file of metro unemployment rates
 bls_url <- "https://www.bls.gov/web/metro/ssamatab1.txt"
 
+# Parse txt file into data frame
 bls_raw <- read_fwf(
   "data/raw/ssamatab1.txt",
   fwf_widths(
@@ -126,11 +126,9 @@ bls_clean <- bls_raw %>%
 #nrow(bls_clean)
 #head(bls_clean)
 #bls_clean %>% filter(is.na(unemployment_rate))
-
-# Check big cities
-bls_clean %>%
-  filter(area_fips %in% c("35620", "31080", "16980")) %>% 
-  select(area_fips, unemployment_rate)
+#bls_clean %>%
+  #filter(area_fips %in% c("35620", "31080", "16980")) %>% 
+  #select(area_fips, unemployment_rate)
 
 bls_clean <- bls_clean %>%
   filter(
