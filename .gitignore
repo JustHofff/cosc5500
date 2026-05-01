@@ -1,6 +1,10 @@
-.Renviron
-data/raw/
-data/master_metros.rds
 .Rhistory
 .RData
 .Rproj.user/
+*.Rproj.user
+
+.Renviron
+
+data/raw/*
+!data/raw/.gitkeep
+data/master_metros.rds
