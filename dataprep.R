@@ -59,6 +59,7 @@ acs_clean <- acs_raw %>%
 # Save checkpoint
 saveRDS(acs_clean, "data/raw/acs_clean.rds")
 
+
 ### CBSA SECTION ###
 
 options(tigris_use_cache = TRUE)
@@ -83,7 +84,7 @@ saveRDS(metros_sf, "data/raw/metros_sf.rds")
 ### BLS SECTION ###
 
 # BLS file of metro unemployment rates
-bls_url <- "https://www.bls.gov/web/metro/ssamatab1.txt"
+# BLS URL: "https://www.bls.gov/web/metro/ssamatab1.txt"
 
 # Parse txt file into data frame
 bls_raw <- read_fwf(
@@ -105,12 +106,12 @@ bls_raw <- read_fwf(
 bls_clean <- bls_raw %>%
   mutate(
     # Trim whitespace from all character columns
-    area_fips         = str_trim(area_fips),
-    area_title        = str_trim(area_title),
+    area_fips = str_trim(area_fips),
+    area_title = str_trim(area_title),
     # Remove commas from numeric columns and convert
-    labor_force       = as.numeric(str_remove_all(labor_force, ",")),
-    employment        = as.numeric(str_remove_all(employment, ",")),
-    unemployment      = as.numeric(str_remove_all(unemployment, ","))
+    labor_force = as.numeric(str_remove_all(labor_force, ",")),
+    employment = as.numeric(str_remove_all(employment, ",")),
+    unemployment = as.numeric(str_remove_all(unemployment, ","))
   ) %>%
   # Keep only the most recent 12 months and average them
   group_by(area_fips) %>%
@@ -145,9 +146,9 @@ metros_sf <- readRDS("data/raw/metros_sf.rds") %>%
 metros_sf %>%
   st_drop_geometry() %>%
   summarize(
-    total        = n(),
+    total = n(),
     has_bls_data = sum(!is.na(unemployment_rate)),
-    missing_bls  = sum(is.na(unemployment_rate))
+    missing_bls = sum(is.na(unemployment_rate))
   )
 
 # Check major metros have data
@@ -170,17 +171,22 @@ scale01 <- function(x) {
 master_metros <- metros_sf %>%
   mutate(
     # Affordability — lower rent-to-income ratio is better
-    afford_score      = 100 - scale01(rent_to_income),
+    afford_score = 100 - scale01(rent_to_income),
     # Job market — lower unemployment is better
-    job_score         = 100 - scale01(unemployment_rate),
+    job_score = 100 - scale01(unemployment_rate),
     # Home value — lower is better
-    homevalue_score   = 100 - scale01(median_home_value)
+    homevalue_score = 100 - scale01(median_home_value)
   )
 
 # Remove Metro & Micro in area names
 master_metros <- master_metros %>%
   mutate(NAME = str_remove(NAME, " Metro Area$") %>%
            str_remove(" Micro Area$"))
+
+# Replace missing Job_scores with a median value
+median_job_score <- median(master_metros$job_score, na.rm = TRUE)
+master_metros <- master_metros %>%
+  mutate(job_score = if_else(is.na(job_score), median_job_score, job_score))
 
 # Check the scores
 master_metros %>%
