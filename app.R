@@ -3,6 +3,10 @@ library(leaflet)
 library(tidyverse)
 library(sf)
 
+LNG <- -98.5
+LAT <- 39.5
+ZOOM <- 4
+
 master <- readRDS("data/master_metros.rds")
 
 pal <- colorNumeric(
@@ -28,18 +32,19 @@ ui <- fluidPage(
       sliderInput("w_home", "Home Value",
                   min = 0, max = 10, value = 5),
       hr(),
-      h4("Filter Results"),
+      h4("Filters"),
+      uiOutput("metro_count"),
       sliderInput("top_pct", "Show top % of metros",
-                  min = 10, max = 100, value = 100, step = 5,
+                  min = 0, max = 100, value = 100, step = 5,
                   post = "%"),
       checkboxGroupInput("size", "City Size",
                          choices  = c("Small", "Medium", "Large", "Major"),
                          selected = c("Small", "Medium", "Large", "Major")),
-      hr(),
-      uiOutput("detail_panel")
+      actionButton("reset", "Reset to Defaults", width = "100%"),
     ),
     mainPanel(
-      leafletOutput("map", height = "600px")
+      leafletOutput("map", height = "600px"),
+      uiOutput("empty_state")
     )
   )
 )
@@ -50,7 +55,26 @@ server <- function(input, output, session) {
   output$map <- renderLeaflet({
     leaflet() %>%
       addTiles() %>%
-      setView(lng = -98.5, lat = 39.5, zoom = 4)
+      setView(lng = LNG, lat = LAT, zoom = ZOOM) %>%
+      addLegend(
+        position = "bottomright",
+        pal = pal,
+        values = c(0, 100),
+        title = "Weighted Score",
+        opacity = 0.7
+      )
+  })
+  
+  # Resets all inputs
+  observeEvent(input$reset, {
+    updateSliderInput(session, "w_afford", value = 5)
+    updateSliderInput(session, "w_jobs",   value = 5)
+    updateSliderInput(session, "w_home",   value = 5)
+    updateSliderInput(session, "top_pct",  value = 100)
+    updateCheckboxGroupInput(session, "size",
+                             selected = c("Small", "Medium", "Large", "Major"))
+    leafletProxy("map") %>% 
+      setView(lng = LNG, lat = LAT, zoom = ZOOM)
   })
   
   # Compute composite scores reactively
@@ -72,6 +96,22 @@ server <- function(input, output, session) {
       )
   })
   
+  # Different state if there are 0 filtered metros
+  output$empty_state <- renderUI({
+    if (nrow(filtered()) == 0) {
+      div(
+        style = "text-align: center; padding: 20px; color: #888;",
+        h4("No metros match your current filters."),
+        p("Try increasing your Top % slider or selecting more city sizes.")
+      )
+    }
+  })
+  
+  # Displays the amount of filtered metros
+  output$metro_count <- renderUI({
+    p(em(paste0(nrow(filtered()), " metros shown")))
+  })
+  
   # Update polygons when filters or weights change
   observeEvent(filtered(), {
     leafletProxy("map") %>%
@@ -83,30 +123,22 @@ server <- function(input, output, session) {
         color = "#444444",
         weight = 1,
         smoothFactor = 0.5,
-        layerId = ~GEOID
+        layerId = ~GEOID,
+        label = ~paste0(NAME, " — ", round(composite_score, 1))
       )
   })
   
-  # Store clicked metro
-  clicked_metro <- reactiveVal(NULL)
-  
+  # Render detail Modal
   observeEvent(input$map_shape_click, {
     click <- input$map_shape_click
-    selected <- scored() %>%
+    metro <- scored() %>%
       filter(GEOID == click$id) %>%
       st_drop_geometry()
-    clicked_metro(selected)
-  })
-  
-  # Render detail panel
-  output$detail_panel <- renderUI({
-    metro <- clicked_metro()
-    if (is.null(metro)) return(NULL)
     
-    tagList(
-      h4(metro$NAME),
+    showModal(modalDialog(
+      title = metro$NAME,
       p(strong("Size: "), metro$size_category),
-      p(strong("Composite Score: "), round(metro$composite_score, 1)),
+      p(strong("Weighted Score: "), round(metro$composite_score, 1)),
       p(strong("Affordability Score: "), round(metro$afford_score, 1)),
       p(strong("Job Market Score: "), round(metro$job_score, 1)),
       p(strong("Home Value Score: "), round(metro$homevalue_score, 1)),
@@ -115,8 +147,10 @@ server <- function(input, output, session) {
       p(strong("Median Home Value: "), paste0("$", formatC(metro$median_home_value, format="d", big.mark=","))),
       p(strong("Unemployment: "),
         if (is.na(metro$unemployment_rate)) "N/A"
-        else paste0(round(metro$unemployment_rate, 1), "%"))
-    )
+        else paste0(round(metro$unemployment_rate, 1), "%")),
+      easyClose = TRUE,
+      footer = modalButton("Close")
+    ))
   })
 }
 
