@@ -1,0 +1,10 @@
+name: waypoint
+title:
+username: jhoff
+account: jhoff
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 17285945
+bundleId: 11943921
+url: https://jhoff.shinyapps.io/waypoint/
+version: 1

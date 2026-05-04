@@ -2,6 +2,8 @@
 
 An interactive R Shiny app that helps you decide where to live by scoring and exploring US metro areas based on what matters most to you.
 
+**Live app:** [jhoff.shinyapps.io/waypoint](https://jhoff.shinyapps.io/waypoint/)
+
 ## Features
 
 - **Explore** - Browse 583 US metros on an interactive map, weighted by your priorities
