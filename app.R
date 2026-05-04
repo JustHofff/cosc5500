@@ -2,6 +2,7 @@ library(shiny)
 library(leaflet)
 library(tidyverse)
 library(sf)
+library(plotly)
 
 LNG <- -98.5
 LAT <- 39.5
@@ -69,6 +70,12 @@ quiz_weights <- list(
     d = c(0, 0, -3)    # Not at all
   )
 )
+
+# Available metros for comparison
+metro_choices <- master %>%
+  st_drop_geometry() %>%
+  arrange(NAME) %>%
+  pull(NAME)
 
 ui <- fluidPage(
   title = "Waypoint",
@@ -167,6 +174,36 @@ ui <- fluidPage(
           br(), br()
         )
       )
+    ),
+    tabPanel(
+      "Compare",
+      br(),
+      fluidRow(
+        column(
+          width = 4,
+          selectInput("cmp1", "City 1",
+                      choices = c("Select a city" = "", metro_choices),
+                      selected = "",
+                      selectize = TRUE)
+        ),
+        column(
+          width = 4,
+          selectInput("cmp2", "City 2",
+                      choices = c("Select a city" = "", metro_choices),
+                      selected = "",
+                      selectize = TRUE)
+        ),
+        column(
+          width = 4,
+          selectInput("cmp3", "City 3 (optional)",
+                      choices = c("None" = "", metro_choices),
+                      selected = "",
+                      selectize = TRUE)
+        )
+      ),
+      uiOutput("compare_prompt"),
+      uiOutput("compare_cards"),
+      plotlyOutput("compare_chart", height="400px")
     )
   )
 )
@@ -420,6 +457,91 @@ server <- function(input, output, session) {
     ))
   }
   
+  # Comparison tab logic
+  cmp_data <- reactive({
+    selected <- c(input$cmp1, input$cmp2, input$cmp3)
+    selected <- selected[selected != ""]
+    if (length(selected) < 2) return(NULL)
+    master %>%
+      st_drop_geometry() %>%
+      filter(NAME %in% selected) %>%
+      arrange(match(NAME, selected))
+  })
+  
+  output$compare_prompt <- renderUI({
+    if (is.null(cmp_data())) {
+      div(
+        style="text-align:center; padding:40px; color:#888;",
+        p("Select at least 2 cities above to compare them.")
+      )
+    }
+  })
+  
+  # Shows details for each metro
+  output$compare_cards <- renderUI({
+    df <- cmp_data()
+    if (is.null(df)) return(NULL)
+    cols <- lapply(seq_len(nrow(df)), function(i) {
+      m <- df[i, ]
+      column(
+        width = floor(12 / nrow(df)),
+        div(
+          style="border:1px solid #ddd; border-radius:8px; padding:16px; margin-bottom:16px;",
+          h4(m$NAME, style="margin-top:0;"),
+          p(strong("Region: "), m$region),
+          p(strong("Size: "), as.character(m$size_category)),
+          hr(),
+          p(strong("Housing Score: "), round(m$housing_score, 1)),
+          p(strong("Job Market Score: "), round(m$job_score, 1)),
+          p(strong("Hazard Risk: "), fema_label(m$fema_score)),
+          hr(),
+          p(strong("Median Rent: "), paste0("$", formatC(m$median_gross_rent, format="d", big.mark=","))),
+          p(strong("Median Income: "), paste0("$", formatC(m$median_hh_income, format="d", big.mark=","))),
+          p(strong("Median Home Value: "), paste0("$", formatC(m$median_home_value, format="d", big.mark=","))),
+          p(strong("Unemployment: "),
+            if (is.na(m$unemployment_rate)) "N/A"
+            else paste0(round(m$unemployment_rate, 1), "%")),
+          p(strong("Population Growth: "),
+            if (is.na(m$pop_growth_pct)) "N/A"
+            else paste0(round(m$pop_growth_pct, 1), "%"))
+        )
+      )
+    })
+    do.call(fluidRow, cols)
+  })
+  
+  # Grouped bar chart for comparison
+  output$compare_chart <- renderPlotly({
+    df <- cmp_data()
+    if (is.null(df)) return(NULL)
+    
+    colors <- c("#1D9E75", "#3478c5", "#e07b39")
+    
+    fig <- plot_ly()
+    for (i in seq_len(nrow(df))) {
+      m <- df[i, ]
+      fig <- fig %>%
+        add_trace(
+          type = "bar",
+          name = m$NAME,
+          x = c("Housing", "Job Market", "Hazard Safety"),
+          y = c(round(m$housing_score, 1),
+                round(m$job_score, 1),
+                round(m$fema_score, 1)),
+          marker = list(color=colors[i])
+        )
+    }
+    fig %>%
+      layout(
+        barmode = "group",
+        yaxis = list(title="Score (0-100)", range=c(0, 100)),
+        xaxis = list(title=""),
+        legend = list(orientation="h", y=-0.2),
+        margin = list(t=20, b=60)
+      )
+  })
+  
+  # Helper to show how many results there are
   output$metro_count <- renderUI({
     n_shown <- nrow(filtered())
     n_pool <- nrow(pool())
@@ -431,6 +553,7 @@ server <- function(input, output, session) {
     p(em(msg), style="color:#888; font-size:12px; margin-top:4px;")
   })
   
+  # If filters result in 0 matches
   output$empty_state <- renderUI({
     if (nrow(filtered()) == 0) {
       div(
