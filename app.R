@@ -7,10 +7,11 @@ LNG <- -98.5
 LAT <- 39.5
 ZOOM <- 4
 TOP_N <- 15
+QUIZ_TOP_N <- 5
 
 master <- readRDS("data/master_metros.rds")
 
-# Parse state abbreviation and assign US region
+# Cleanup abbreviations
 master <- master %>%
   mutate(
     state_abbr = str_extract(NAME, "[A-Z]{2}(?=-| Metro| Micro|$)"),
@@ -25,6 +26,7 @@ master <- master %>%
     )
   )
 
+# Color palette
 pal <- colorNumeric(
   palette = "YlGn",
   domain = c(0, 100)
@@ -36,7 +38,6 @@ normalize_weights <- function(w1, w2, w3) {
   c(w1/total, w2/total, w3/total)
 }
 
-# Convert fema_score to a readable risk label
 fema_label <- function(score) {
   case_when(
     score >= 75 ~ "Low",
@@ -46,33 +47,126 @@ fema_label <- function(score) {
   )
 }
 
+# Quiz weight deltas — how much each answer adjusts each dimension
+# Each answer is (housing_delta, jobs_delta, fema_delta)
+quiz_weights <- list(
+  q1 = list(
+    a = c(-1, 3, 0),   # Career opportunity
+    b = c(3, -1, 0),   # More affordable
+    c = c(3, -1, 0),   # Buy a home
+    d = c(0, 0, 0)     # No preference
+  ),
+  q2 = list(
+    a = c(3, -1, 0),   # Keep monthly bills low
+    b = c(3, -1, 0),   # Invest in a home
+    c = c(-1, 3, 0),   # Career can grow
+    d = c(0, 0, 0)     # No preference
+  ),
+  q3 = list(
+    a = c(-1, -1, 4),  # A lot
+    b = c(0, 0, 2),    # Somewhat
+    c = c(0, 0, 0),    # No preference
+    d = c(0, 0, -3)    # Not at all
+  )
+)
+
 ui <- fluidPage(
-  sidebarLayout(
-    sidebarPanel(
-      h4("Your Priorities"),
-      p(em("Drag to weight what matters most to you.")),
-      sliderInput("w_housing", "Housing Affordability", min=0, max=10, value=5),
-      sliderInput("w_jobs", "Job Market", min=0, max=10, value=5),
-      sliderInput("w_fema", "Natural Hazard Safety", min=0, max=10, value=5),
-      hr(),
-      h4("Filters"),
-      uiOutput("metro_count"),
-      selectInput("region", "Region",
-                  choices = c("All regions", "Northeast", "Midwest", "South", "West"),
-                  selected = "All regions"),
-      selectInput("state", "State",
-                  choices = c("All states"),
-                  selected = "All states"),
-      checkboxGroupInput("size", "City Size",
-                         choices = c("Small","Medium","Large","Major"),
-                         selected = c("Small","Medium","Large","Major")),
-      hr(),
-      checkboxInput("show_all", "Show all metros", value=FALSE),
-      actionButton("reset", "Reset to Defaults", width="100%")
+  title = "Waypoint",
+  titlePanel("Waypoint — Find Your Next City"),
+  tabsetPanel(
+    id = "main_tabs",
+    tabPanel(
+      "Explore",
+      sidebarLayout(
+        sidebarPanel(
+          h4("Your Priorities"),
+          p(em("Drag to weight what matters most to you.")),
+          sliderInput("w_housing", "Housing Affordability", min=0, max=10, value=5),
+          sliderInput("w_jobs", "Job Market", min=0, max=10, value=5),
+          sliderInput("w_fema", "Natural Hazard Safety", min=0, max=10, value=5),
+          hr(),
+          h4("Filters"),
+          uiOutput("metro_count"),
+          selectInput("region", "Region",
+                      choices = c("All regions", "Northeast", "Midwest", "South", "West"),
+                      selected = "All regions"),
+          selectInput("state", "State",
+                      choices = c("All states"),
+                      selected = "All states"),
+          checkboxGroupInput("size", "City Size",
+                             choices = c("Small","Medium","Large","Major"),
+                             selected = c("Small","Medium","Large","Major")),
+          hr(),
+          checkboxInput("show_all", "Show all metros", value=FALSE),
+          actionButton("reset", "Reset to Defaults", width="100%")
+        ),
+        mainPanel(
+          leafletOutput("map", height="600px"),
+          uiOutput("empty_state")
+        )
+      )
     ),
-    mainPanel(
-      leafletOutput("map", height="600px"),
-      uiOutput("empty_state")
+    tabPanel(
+      "Find My City",
+      fluidRow(
+        column(
+          width = 6,
+          offset = 3,
+          br(),
+          h3("Find My City"),
+          p("Answer a few questions and we'll find your best matches."),
+          hr(),
+          radioButtons("q1", "What's bringing you to a new city?",
+                       selected = character(0),
+                       choices = c(
+                         "Chasing a new career opportunity" = "a",
+                         "A fresh start somewhere more affordable" = "b",
+                         "Ready to put down roots and buy a home" = "c",
+                         "No preference, just exploring my options" = "d"
+                       )),
+          hr(),
+          radioButtons("q2", "How do you think about where your money goes?",
+                       selected = character(0),
+                       choices = c(
+                         "I want to keep my monthly bills as low as possible" = "a",
+                         "I'd rather invest in a home I can own" = "b",
+                         "I want to be somewhere my career can grow" = "c",
+                         "No preference" = "d"
+                       )),
+          hr(),
+          radioButtons("q3", "How much does living somewhere safe from things like floods, wildfires, or hurricanes matter to you?",
+                       selected = character(0),
+                       choices = c(
+                         "A lot, it's one of my top priorities" = "a",
+                         "Somewhat, I'd prefer lower risk if possible" = "b",
+                         "No preference, I'm open to anywhere" = "c",
+                         "Not at all, it's not something I think about" = "d"
+                       )),
+          hr(),
+          radioButtons("q4", "What kind of city feels like home to you?",
+                       selected = character(0),
+                       choices = c(
+                         "Somewhere small and close-knit" = "Small",
+                         "A mid-size city with room to grow" = "Medium",
+                         "A big city with lots going on" = "Large",
+                         "A major metro, the bigger the better" = "Major",
+                         "No preference, I'm open to anything" = "all"
+                       )),
+          hr(),
+          radioButtons("q5", "Is there a part of the country you're drawn to?",
+                       selected = character(0),
+                       choices = c(
+                         "Northeast" = "Northeast",
+                         "Midwest" = "Midwest",
+                         "South" = "South",
+                         "West" = "West",
+                         "No preference, anywhere works for me" = "all"
+                       )),
+          hr(),
+          actionButton("submit_quiz", "Find My City", class="btn-primary", width="100%"),
+          br(), br()
+        )
+      )
     )
   )
 )
@@ -86,22 +180,25 @@ server <- function(input, output, session) {
       states <- sort(unique(master$state_abbr[master$region == input$region]))
     }
     updateSelectInput(session, "state",
-                      choices  = c("All states", states),
+                      choices = c("All states", states),
                       selected = "All states")
   })
   
+  # Renders map
   output$map <- renderLeaflet({
     leaflet() %>%
       addTiles() %>%
       setView(lng=LNG, lat=LAT, zoom=ZOOM)
   })
   
+  # Computes weighted/composite score
   scored <- reactive({
     w <- normalize_weights(input$w_housing, input$w_jobs, input$w_fema)
     master %>%
       mutate(composite_score = w[1]*housing_score + w[2]*job_score + w[3]*fema_score)
   })
   
+  # Applies filters
   pool <- reactive({
     df <- scored()
     if (input$region != "All regions") df <- df %>% filter(region == input$region)
@@ -110,19 +207,18 @@ server <- function(input, output, session) {
     df %>% filter(size_category %in% input$size)
   })
   
+  # Gets filtered data
   filtered <- reactive({
     df <- pool() %>% arrange(desc(composite_score))
     if (!input$show_all) df <- df %>% slice_head(n = TOP_N)
     df
   })
   
-  observeEvent(list(filtered(), input$show_all), {
+  # Draws the leaflet map with outlines or centroids
+  draw_map <- function(df, show_all) {
     proxy <- leafletProxy("map") %>% clearShapes() %>% clearMarkers() %>% clearControls()
-    
-    df <- filtered()
     if (nrow(df) == 0) return()
-    
-    if (input$show_all) {
+    if (show_all) {
       proxy %>%
         addPolygons(
           data = df,
@@ -132,7 +228,7 @@ server <- function(input, output, session) {
           weight = 1,
           smoothFactor = 0.5,
           layerId = ~GEOID,
-          label = ~paste0(NAME, " — ", round(composite_score, 1))
+          label = ~paste0(NAME, " -- ", round(composite_score, 1))
         ) %>%
         addLegend(
           position = "bottomright",
@@ -149,7 +245,6 @@ server <- function(input, output, session) {
           cy = map_dbl(geometry, ~st_centroid(.)[[2]])
         ) %>%
         st_drop_geometry()
-      
       proxy %>%
         addPolygons(
           data = df,
@@ -159,7 +254,7 @@ server <- function(input, output, session) {
           weight = 1,
           smoothFactor = 0.5,
           layerId = ~paste0("poly_", GEOID),
-          label = ~paste0(NAME, " — ", round(composite_score, 1))
+          label = ~paste0(NAME, " -- ", round(composite_score, 1))
         ) %>%
         addCircleMarkers(
           data = centroids,
@@ -171,7 +266,7 @@ server <- function(input, output, session) {
           fillColor = "#1D9E75",
           fillOpacity = 1,
           layerId = ~GEOID,
-          label = ~paste0("#", rank, " ", NAME, " — ", round(composite_score, 1)),
+          label = ~paste0("#", rank, " ", NAME, " -- ", round(composite_score, 1)),
           labelOptions = labelOptions(
             style = list("font-weight" = "bold")
           )
@@ -193,6 +288,95 @@ server <- function(input, output, session) {
           )
         )
     }
+  }
+  
+  observeEvent(list(filtered(), input$show_all), {
+    draw_map(filtered(), input$show_all)
+  })
+  
+  # Quiz submission
+  observeEvent(input$submit_quiz, {
+    # Validate all questions answered
+    unanswered <- c(
+      if (is.null(input$q1) || length(input$q1) == 0) "Question 1",
+      if (is.null(input$q2) || length(input$q2) == 0) "Question 2",
+      if (is.null(input$q3) || length(input$q3) == 0) "Question 3",
+      if (is.null(input$q4) || length(input$q4) == 0) "Question 4",
+      if (is.null(input$q5) || length(input$q5) == 0) "Question 5"
+    )
+    if (length(unanswered) > 0) {
+      showModal(modalDialog(
+        title = "Almost there!",
+        p(paste0("Please answer ", paste(unanswered, collapse=", "), " before continuing.")),
+        easyClose = TRUE,
+        footer = modalButton("Got it")
+      ))
+      return()
+    }
+
+    w_housing <- 5
+    w_jobs <- 5
+    w_fema <- 5
+    
+    # Applies all questions weights
+    # Q1
+    delta <- quiz_weights$q1[[input$q1]]
+    w_housing <- w_housing + delta[1]
+    w_jobs <- w_jobs + delta[2]
+    w_fema <- w_fema + delta[3]
+    
+    # Q2
+    delta <- quiz_weights$q2[[input$q2]]
+    w_housing <- w_housing + delta[1]
+    w_jobs <- w_jobs + delta[2]
+    w_fema <- w_fema + delta[3]
+    
+    # Q3
+    delta <- quiz_weights$q3[[input$q3]]
+    w_housing <- w_housing + delta[1]
+    w_jobs <- w_jobs + delta[2]
+    w_fema <- w_fema + delta[3]
+    
+    # Min of 0 for weights
+    w_housing <- max(0, w_housing)
+    w_jobs <- max(0, w_jobs)
+    w_fema <- max(0, w_fema)
+    
+    # Compute scores using quiz weights
+    w <- normalize_weights(w_housing, w_jobs, w_fema)
+    quiz_scored <- master %>%
+      mutate(composite_score = w[1]*housing_score + w[2]*job_score + w[3]*fema_score)
+    
+    # Q4 size filter
+    if (input$q4 != "all") {
+      quiz_scored <- quiz_scored %>% filter(size_category == input$q4)
+    }
+    
+    # Q5 region filter
+    if (input$q5 != "all") {
+      quiz_scored <- quiz_scored %>% filter(region == input$q5)
+    }
+    
+    # Update sliders with weights
+    updateSliderInput(session, "w_housing", value=round(w_housing))
+    updateSliderInput(session, "w_jobs", value=round(w_jobs))
+    updateSliderInput(session, "w_fema", value=round(w_fema))
+    
+    # Update region and size filters
+    if (input$q5 != "all") {
+      updateSelectInput(session, "region", selected=input$q5)
+    } else {
+      updateSelectInput(session, "region", selected="All regions")
+    }
+    
+    if (input$q4 != "all") {
+      updateCheckboxGroupInput(session, "size", selected=input$q4)
+    } else {
+      updateCheckboxGroupInput(session, "size",
+                               selected=c("Small","Medium","Large","Major"))
+    }
+    
+    updateTabsetPanel(session, "main_tabs", selected="Explore")
   })
   
   observeEvent(input$map_marker_click, {
@@ -206,6 +390,7 @@ server <- function(input, output, session) {
     show_detail(id)
   })
   
+  # Popup modal for more info
   show_detail <- function(geoid) {
     metro <- scored() %>%
       filter(GEOID == geoid) %>%
@@ -215,7 +400,7 @@ server <- function(input, output, session) {
       title = metro$NAME,
       p(strong("Size: "), metro$size_category),
       p(strong("Region: "), metro$region),
-      p(strong("Weighted Score: "),round(metro$composite_score, 1)),
+      p(strong("Weighted Score: "), round(metro$composite_score, 1)),
       hr(),
       p(strong("Housing Score: "), round(metro$housing_score, 1)),
       p(strong("Job Market Score: "), round(metro$job_score, 1)),
@@ -256,6 +441,18 @@ server <- function(input, output, session) {
     }
   })
   
+  # Resets buttons
+  observeEvent(input$main_tabs, {
+    if (input$main_tabs == "Find My City") {
+      updateRadioButtons(session, "q1", selected=character(0))
+      updateRadioButtons(session, "q2", selected=character(0))
+      updateRadioButtons(session, "q3", selected=character(0))
+      updateRadioButtons(session, "q4", selected=character(0))
+      updateRadioButtons(session, "q5", selected=character(0))
+    }
+  })
+  
+  # Resets sliders and filters
   observeEvent(input$reset, {
     updateSliderInput(session, "w_housing", value=5)
     updateSliderInput(session, "w_jobs", value=5)

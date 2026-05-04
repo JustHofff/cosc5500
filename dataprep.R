@@ -31,6 +31,7 @@ acs_vars <- c(
   total_population = "B01003_001"
 )
 
+# Home financial data
 acs_raw <- get_acs(
   geography = "metropolitan statistical area/micropolitan statistical area",
   variables = acs_vars,
@@ -39,7 +40,7 @@ acs_raw <- get_acs(
   output = "wide"
 )
 
-# Fetch 2022 population for growth rate comparison
+# Population growth rate data
 acs_pop_2022 <- get_acs(
   geography = "metropolitan statistical area/micropolitan statistical area",
   variables = c(pop_2022 = "B01003_001"),
@@ -83,6 +84,7 @@ saveRDS(acs_clean, "data/raw/acs_clean.rds")
 
 options(tigris_use_cache = TRUE)
 
+# Outlines for metro areas data
 cbsa_shapes <- core_based_statistical_areas(cb = TRUE, year = 2021) %>%
   st_transform(4326)
 
@@ -97,6 +99,7 @@ saveRDS(metros_sf, "data/raw/metros_sf.rds")
 
 # BLS URL: "https://www.bls.gov/web/metro/ssamatab1.txt"
 
+# Unemployment data
 bls_raw <- read_fwf(
   "data/raw/ssamatab1.txt",
   fwf_widths(
@@ -138,10 +141,12 @@ saveRDS(metros_sf, "data/raw/metros_sf.rds")
 
 ### FEMA SECTION ###
 
+# Hazard risk data
 fema_raw <- read_csv("data/raw/NRI_Table_Counties.csv") %>%
   select(STCOFIPS, RISK_SCORE) %>%
   mutate(GEOID_county = str_pad(as.character(STCOFIPS), width = 5, pad = "0"))
 
+# Maps FIPS to CBSA area codes
 county_xwalk <- read_csv("data/raw/cbsa2fipsxw_2023.csv", col_types = cols(.default = "c")) %>%
   mutate(
     GEOID_county = paste0(
@@ -164,6 +169,7 @@ cat("FEMA coverage:", nrow(fema_cbsa), "CBSAs matched\n")
 
 ### COMBINING SECTION ###
 
+# Combines all data and calculates scores
 master_metros <- readRDS("data/raw/metros_sf.rds") %>%
   left_join(fema_cbsa, by = c("GEOID" = "CBSAFP")) %>%
   mutate(
