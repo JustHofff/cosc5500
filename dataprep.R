@@ -13,27 +13,42 @@ library(readr)
 dir.create("data/raw", recursive = TRUE, showWarnings = FALSE)
 
 
+### SCORING FUNCTION ###
+
+scale01 <- function(x) {
+  (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE)) * 100
+}
+
+
 ### ACS SECTION ###
 
 census_api_key(Sys.getenv("CENSUS_API_KEY"), install = FALSE)
 
-# Fetch ACS data
 acs_vars <- c(
   median_home_value = "B25077_001",
   median_gross_rent = "B25064_001",
-  median_hh_income  = "B19013_001",
-  total_population  = "B01003_001"
+  median_hh_income = "B19013_001",
+  total_population = "B01003_001"
 )
 
 acs_raw <- get_acs(
   geography = "metropolitan statistical area/micropolitan statistical area",
   variables = acs_vars,
-  year      = 2022,
-  survey    = "acs5",
-  output    = "wide"
+  year = 2023,
+  survey = "acs5",
+  output = "wide"
 )
 
-# Clean up ACS data
+# Fetch 2022 population for growth rate comparison
+acs_pop_2022 <- get_acs(
+  geography = "metropolitan statistical area/micropolitan statistical area",
+  variables = c(pop_2022 = "B01003_001"),
+  year = 2022,
+  survey = "acs5",
+  output = "wide"
+) %>%
+  select(GEOID, pop_2022 = pop_2022E)
+
 acs_clean <- acs_raw %>%
   select(GEOID, NAME, ends_with("E")) %>%
   rename_with(~str_remove(., "E$"), ends_with("E")) %>%
@@ -44,19 +59,23 @@ acs_clean <- acs_raw %>%
     NAME = str_remove(NAME, ", Metro Area$") %>%
       str_remove(", Micro Area$"),
     rent_to_income = (median_gross_rent * 12) / median_hh_income,
-    size_category  = factor(case_when(
-      total_population >= 2e6   ~ "Major",
-      total_population >= 5e5   ~ "Large",
+    size_category = factor(case_when(
+      total_population >= 2e6 ~ "Major",
+      total_population >= 5e5 ~ "Large",
       total_population >= 1.5e5 ~ "Medium",
-      TRUE                      ~ "Small"
+      TRUE ~ "Small"
     ), levels = c("Small", "Medium", "Large", "Major"))
+  ) %>%
+  left_join(acs_pop_2022, by = "GEOID") %>%
+  mutate(
+    pop_growth_pct = (total_population - pop_2022) / pop_2022 * 100
   )
 
 # Sanity checks
-#nrow(acs_clean)
-#acs_clean %>% count(size_category)
+# nrow(acs_clean)
+# acs_clean %>% count(size_category)
+# summary(acs_clean$pop_growth_pct)
 
-# Save checkpoint
 saveRDS(acs_clean, "data/raw/acs_clean.rds")
 
 
@@ -64,29 +83,20 @@ saveRDS(acs_clean, "data/raw/acs_clean.rds")
 
 options(tigris_use_cache = TRUE)
 
-# Fetch CBSA data
 cbsa_shapes <- core_based_statistical_areas(cb = TRUE, year = 2021) %>%
   st_transform(4326)
 
-# Join shapes to the ACS data
 metros_sf <- cbsa_shapes %>%
   select(GEOID, geometry) %>%
   inner_join(st_drop_geometry(acs_clean), by = "GEOID")
 
-# Sanity checks
-#nrow(metros_sf)
-#plot(st_geometry(metros_sf))
-
-# Save checkpoint
 saveRDS(metros_sf, "data/raw/metros_sf.rds")
 
 
 ### BLS SECTION ###
 
-# BLS file of metro unemployment rates
 # BLS URL: "https://www.bls.gov/web/metro/ssamatab1.txt"
 
-# Parse txt file into data frame
 bls_raw <- read_fwf(
   "data/raw/ssamatab1.txt",
   fwf_widths(
@@ -99,100 +109,92 @@ bls_raw <- read_fwf(
   col_types = "cccciicccd"
 )
 
-# Sanity Checks
-#glimpse(bls_raw)
-#head(bls_raw)
-
 bls_clean <- bls_raw %>%
   mutate(
-    # Trim whitespace from all character columns
     area_fips = str_trim(area_fips),
     area_title = str_trim(area_title),
-    # Remove commas from numeric columns and convert
     labor_force = as.numeric(str_remove_all(labor_force, ",")),
     employment = as.numeric(str_remove_all(employment, ",")),
     unemployment = as.numeric(str_remove_all(unemployment, ","))
   ) %>%
-  # Keep only the most recent 12 months and average them
   group_by(area_fips) %>%
   slice_max(order_by = year * 100 + month, n = 12) %>%
   summarize(
     unemployment_rate = mean(unemployment_rate, na.rm = TRUE),
     .groups = "drop"
   ) %>%
-  # Pad area_fips to 5 digits to match the GEOID format
-  mutate(area_fips = str_pad(area_fips, width = 5, pad = "0"))
-
-# Sanity Checks
-#nrow(bls_clean)
-#head(bls_clean)
-#bls_clean %>% filter(is.na(unemployment_rate))
-#bls_clean %>%
-  #filter(area_fips %in% c("35620", "31080", "16980")) %>% 
-  #select(area_fips, unemployment_rate)
-
-bls_clean <- bls_clean %>%
+  mutate(area_fips = str_pad(area_fips, width = 5, pad = "0")) %>%
   filter(
     !is.na(unemployment_rate),
     !is.nan(unemployment_rate),
-    str_detect(area_fips, "^\\d{5}$")  # keep only valid 5-digit codes
+    str_detect(area_fips, "^\\d{5}$")
   )
 
-# Join metros with bls data
 metros_sf <- readRDS("data/raw/metros_sf.rds") %>%
   left_join(bls_clean, by = c("GEOID" = "area_fips"))
-
-# Check how many metros got a match
-metros_sf %>%
-  st_drop_geometry() %>%
-  summarize(
-    total = n(),
-    has_bls_data = sum(!is.na(unemployment_rate)),
-    missing_bls = sum(is.na(unemployment_rate))
-  )
-
-# Check major metros have data
-metros_sf %>%
-  st_drop_geometry() %>%
-  filter(size_category == "Major") %>%
-  select(NAME, unemployment_rate) %>%
-  arrange(NAME)
 
 saveRDS(metros_sf, "data/raw/metros_sf.rds")
 
 
+### FEMA SECTION ###
+
+fema_raw <- read_csv("data/raw/NRI_Table_Counties.csv") %>%
+  select(STCOFIPS, RISK_SCORE) %>%
+  mutate(GEOID_county = str_pad(as.character(STCOFIPS), width = 5, pad = "0"))
+
+county_xwalk <- read_csv("data/raw/cbsa2fipsxw_2023.csv", col_types = cols(.default = "c")) %>%
+  mutate(
+    GEOID_county = paste0(
+      str_pad(fipsstatecode, 2, pad = "0"),
+      str_pad(fipscountycode, 3, pad = "0")
+    ),
+    CBSAFP = str_pad(cbsacode, 5, pad = "0")
+  ) %>%
+  select(GEOID_county, CBSAFP) %>%
+  filter(!is.na(CBSAFP), CBSAFP != "NA")
+
+fema_cbsa <- fema_raw %>%
+  left_join(county_xwalk, by = "GEOID_county") %>%
+  filter(!is.na(CBSAFP), !is.na(RISK_SCORE)) %>%
+  group_by(CBSAFP) %>%
+  summarise(avg_risk = mean(RISK_SCORE, na.rm = TRUE), .groups = "drop")
+
+cat("FEMA coverage:", nrow(fema_cbsa), "CBSAs matched\n")
+
+
 ### COMBINING SECTION ###
 
-# Scoring function
-scale01 <- function(x) {
-  (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE)) * 100
-}
-
-master_metros <- metros_sf %>%
+master_metros <- readRDS("data/raw/metros_sf.rds") %>%
+  left_join(fema_cbsa, by = c("GEOID" = "CBSAFP")) %>%
   mutate(
-    # Affordability — lower rent-to-income ratio is better
-    afford_score = 100 - scale01(rent_to_income),
-    # Job market — lower unemployment is better
+    housing_score = ((100 - scale01(rent_to_income)) + (100 - scale01(median_home_value))) / 2,
     job_score = 100 - scale01(unemployment_rate),
-    # Home value — lower is better
-    homevalue_score = 100 - scale01(median_home_value)
+    fema_score = 100 - scale01(avg_risk)
+  ) %>%
+  mutate(
+    NAME = str_remove(NAME, " Metro Area$") %>%
+      str_remove(" Micro Area$")
   )
 
-# Remove Metro & Micro in area names
-master_metros <- master_metros %>%
-  mutate(NAME = str_remove(NAME, " Metro Area$") %>%
-           str_remove(" Micro Area$"))
-
-# Replace missing Job_scores with a median value
 median_job_score <- median(master_metros$job_score, na.rm = TRUE)
-master_metros <- master_metros %>%
-  mutate(job_score = if_else(is.na(job_score), median_job_score, job_score))
+median_fema_score <- median(master_metros$fema_score, na.rm = TRUE)
 
-# Check the scores
+master_metros <- master_metros %>%
+  mutate(
+    job_score = if_else(is.na(job_score), median_job_score, job_score),
+    fema_score = if_else(is.na(fema_score), median_fema_score, fema_score)
+  )
+
+# Sanity checks
+cat("Final metro count:", nrow(master_metros), "\n")
+cat("Score NAs — housing:", sum(is.na(master_metros$housing_score)),
+    "| job:", sum(is.na(master_metros$job_score)),
+    "| fema:", sum(is.na(master_metros$fema_score)), "\n")
+
 master_metros %>%
   st_drop_geometry() %>%
-  select(NAME, afford_score, job_score, homevalue_score) %>%
-  arrange(desc(afford_score)) %>%
+  select(NAME, housing_score, job_score, fema_score) %>%
+  arrange(desc(housing_score)) %>%
   head(10)
 
 saveRDS(master_metros, "data/master_metros.rds")

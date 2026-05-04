@@ -10,7 +10,7 @@ TOP_N <- 15
 
 master <- readRDS("data/master_metros.rds")
 
-# --- Parse state abbreviation and assign US region ---
+# Parse state abbreviation and assign US region
 master <- master %>%
   mutate(
     state_abbr = str_extract(NAME, "[A-Z]{2}(?=-| Metro| Micro|$)"),
@@ -27,7 +27,7 @@ master <- master %>%
 
 pal <- colorNumeric(
   palette = "YlGn",
-  domain  = c(0, 100)
+  domain = c(0, 100)
 )
 
 normalize_weights <- function(w1, w2, w3) {
@@ -36,25 +36,35 @@ normalize_weights <- function(w1, w2, w3) {
   c(w1/total, w2/total, w3/total)
 }
 
+# Convert fema_score to a readable risk label
+fema_label <- function(score) {
+  case_when(
+    score >= 75 ~ "Low",
+    score >= 50 ~ "Moderate",
+    score >= 25 ~ "High",
+    TRUE ~ "Very High"
+  )
+}
+
 ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       h4("Your Priorities"),
       p(em("Drag to weight what matters most to you.")),
-      sliderInput("w_afford", "Affordability", min=0, max=10, value=5),
-      sliderInput("w_jobs",   "Job Market",    min=0, max=10, value=5),
-      sliderInput("w_home",   "Home Value",    min=0, max=10, value=5),
+      sliderInput("w_housing", "Housing Affordability", min=0, max=10, value=5),
+      sliderInput("w_jobs", "Job Market", min=0, max=10, value=5),
+      sliderInput("w_fema", "Natural Hazard Safety", min=0, max=10, value=5),
       hr(),
       h4("Filters"),
       uiOutput("metro_count"),
       selectInput("region", "Region",
-                  choices  = c("All regions", "Northeast", "Midwest", "South", "West"),
+                  choices = c("All regions", "Northeast", "Midwest", "South", "West"),
                   selected = "All regions"),
       selectInput("state", "State",
-                  choices  = c("All states"),
+                  choices = c("All states"),
                   selected = "All states"),
       checkboxGroupInput("size", "City Size",
-                         choices  = c("Small","Medium","Large","Major"),
+                         choices = c("Small","Medium","Large","Major"),
                          selected = c("Small","Medium","Large","Major")),
       hr(),
       checkboxInput("show_all", "Show all metros", value=FALSE),
@@ -69,7 +79,6 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   
-  # Update state dropdown when region changes
   observeEvent(input$region, {
     if (input$region == "All regions") {
       states <- sort(unique(master$state_abbr))
@@ -88,12 +97,11 @@ server <- function(input, output, session) {
   })
   
   scored <- reactive({
-    w <- normalize_weights(input$w_afford, input$w_jobs, input$w_home)
+    w <- normalize_weights(input$w_housing, input$w_jobs, input$w_fema)
     master %>%
-      mutate(composite_score = w[1]*afford_score + w[2]*job_score + w[3]*homevalue_score)
+      mutate(composite_score = w[1]*housing_score + w[2]*job_score + w[3]*fema_score)
   })
   
-  # All metros passing sidebar filters (region, state, size) — no cap yet
   pool <- reactive({
     df <- scored()
     if (input$region != "All regions") df <- df %>% filter(region == input$region)
@@ -102,7 +110,6 @@ server <- function(input, output, session) {
     df %>% filter(size_category %in% input$size)
   })
   
-  # Top N of pool, or full pool when show_all is checked
   filtered <- reactive({
     df <- pool() %>% arrange(desc(composite_score))
     if (!input$show_all) df <- df %>% slice_head(n = TOP_N)
@@ -116,81 +123,78 @@ server <- function(input, output, session) {
     if (nrow(df) == 0) return()
     
     if (input$show_all) {
-      # Choropleth polygon mode
       proxy %>%
         addPolygons(
-          data        = df,
-          fillColor   = ~pal(composite_score),
+          data = df,
+          fillColor = ~pal(composite_score),
           fillOpacity = 0.7,
-          color       = "#444444",
-          weight      = 1,
+          color = "#444444",
+          weight = 1,
           smoothFactor = 0.5,
-          layerId     = ~GEOID,
-          label       = ~paste0(NAME, " — ", round(composite_score, 1))
+          layerId = ~GEOID,
+          label = ~paste0(NAME, " — ", round(composite_score, 1))
         ) %>%
         addLegend(
           position = "bottomright",
-          pal      = pal,
-          values   = c(0, 100),
-          title    = "Weighted Score",
-          opacity  = 0.7
+          pal = pal,
+          values = c(0, 100),
+          title = "Weighted Score",
+          opacity = 0.7
         )
     } else {
-      # Ranked numbered marker mode
       centroids <- df %>%
         mutate(
           rank = row_number(),
-          cx   = map_dbl(geometry, ~st_centroid(.)[[1]]),
-          cy   = map_dbl(geometry, ~st_centroid(.)[[2]])
+          cx = map_dbl(geometry, ~st_centroid(.)[[1]]),
+          cy = map_dbl(geometry, ~st_centroid(.)[[2]])
         ) %>%
         st_drop_geometry()
       
       proxy %>%
         addPolygons(
-          data        = df,
-          fillColor   = "#1D9E75",
+          data = df,
+          fillColor = "#1D9E75",
           fillOpacity = 0.08,
-          color       = "#1D9E75",
-          weight      = 1,
+          color = "#1D9E75",
+          weight = 1,
           smoothFactor = 0.5,
-          layerId     = ~paste0("poly_", GEOID),
-          label       = ~paste0(NAME, " — ", round(composite_score, 1))
+          layerId = ~paste0("poly_", GEOID),
+          label = ~paste0(NAME, " — ", round(composite_score, 1))
         ) %>%
         addCircleMarkers(
-          data        = centroids,
-          lng         = ~cx,
-          lat         = ~cy,
-          radius      = 14,
-          color       = "white",
-          weight      = 2,
-          fillColor   = "#1D9E75",
+          data = centroids,
+          lng = ~cx,
+          lat = ~cy,
+          radius = 14,
+          color = "white",
+          weight = 2,
+          fillColor = "#1D9E75",
           fillOpacity = 1,
-          layerId     = ~GEOID,
-          label       = ~paste0("#", rank, " ", NAME, " — ", round(composite_score, 1)),
+          layerId = ~GEOID,
+          label = ~paste0("#", rank, " ", NAME, " — ", round(composite_score, 1)),
           labelOptions = labelOptions(
             style = list("font-weight" = "bold")
           )
         ) %>%
         addLabelOnlyMarkers(
-          data        = centroids,
-          lng         = ~cx,
-          lat         = ~cy,
-          label       = ~as.character(rank),
+          data = centroids,
+          lng = ~cx,
+          lat = ~cy,
+          label = ~as.character(rank),
           labelOptions = labelOptions(
-            noHide    = TRUE,
+            noHide = TRUE,
             direction = "center",
-            textOnly  = TRUE,
-            style     = list(
-              "color"       = "white",
+            textOnly = TRUE,
+            style = list(
+              "color" = "white",
               "font-weight" = "bold",
-              "font-size"   = "12px"
+              "font-size" = "12px"
             )
           )
         )
     }
   })
   
-  # Click handler — works for both numbered markers and choropleth polygons
   observeEvent(input$map_marker_click, {
     click <- input$map_marker_click
     show_detail(click$id)
@@ -208,27 +212,32 @@ server <- function(input, output, session) {
       st_drop_geometry()
     if (nrow(metro) == 0) return()
     showModal(modalDialog(
-      title    = metro$NAME,
-      p(strong("Size: "),             metro$size_category),
-      p(strong("Region: "),           metro$region),
-      p(strong("Weighted Score: "),  round(metro$composite_score, 1)),
-      p(strong("Affordability: "),    round(metro$afford_score, 1)),
-      p(strong("Job Market: "),       round(metro$job_score, 1)),
-      p(strong("Home Value: "),       round(metro$homevalue_score, 1)),
-      p(strong("Median Rent: "),      paste0("$", formatC(metro$median_gross_rent, format="d", big.mark=","))),
-      p(strong("Median Income: "),    paste0("$", formatC(metro$median_hh_income,  format="d", big.mark=","))),
-      p(strong("Median Home Value: "),paste0("$", formatC(metro$median_home_value, format="d", big.mark=","))),
+      title = metro$NAME,
+      p(strong("Size: "), metro$size_category),
+      p(strong("Region: "), metro$region),
+      p(strong("Weighted Score: "),round(metro$composite_score, 1)),
+      hr(),
+      p(strong("Housing Score: "), round(metro$housing_score, 1)),
+      p(strong("Job Market Score: "), round(metro$job_score, 1)),
+      p(strong("Hazard Risk: "), fema_label(metro$fema_score)),
+      hr(),
+      p(strong("Median Rent: "), paste0("$", formatC(metro$median_gross_rent, format="d", big.mark=","))),
+      p(strong("Median Income: "), paste0("$", formatC(metro$median_hh_income, format="d", big.mark=","))),
+      p(strong("Median Home Value: "), paste0("$", formatC(metro$median_home_value, format="d", big.mark=","))),
       p(strong("Unemployment: "),
         if (is.na(metro$unemployment_rate)) "N/A"
         else paste0(round(metro$unemployment_rate, 1), "%")),
+      p(strong("Population Growth: "),
+        if (is.na(metro$pop_growth_pct)) "N/A"
+        else paste0(round(metro$pop_growth_pct, 1), "%")),
       easyClose = TRUE,
-      footer    = modalButton("Close")
+      footer = modalButton("Close")
     ))
   }
   
   output$metro_count <- renderUI({
-    n_shown  <- nrow(filtered())
-    n_pool   <- nrow(pool())
+    n_shown <- nrow(filtered())
+    n_pool <- nrow(pool())
     if (input$show_all) {
       msg <- paste0("Showing all ", n_shown, " metros")
     } else {
@@ -248,16 +257,16 @@ server <- function(input, output, session) {
   })
   
   observeEvent(input$reset, {
-    updateSliderInput(session, "w_afford", value=5)
-    updateSliderInput(session, "w_jobs",   value=5)
-    updateSliderInput(session, "w_home",   value=5)
-    updateSelectInput(session, "region",   selected="All regions")
-    updateSelectInput(session, "state",    selected="All states")
+    updateSliderInput(session, "w_housing", value=5)
+    updateSliderInput(session, "w_jobs", value=5)
+    updateSliderInput(session, "w_fema", value=5)
+    updateSelectInput(session, "region", selected="All regions")
+    updateSelectInput(session, "state", selected="All states")
     updateCheckboxGroupInput(session, "size",
                              selected=c("Small","Medium","Large","Major"))
     updateCheckboxInput(session, "show_all", value=FALSE)
-    leafletProxy("map") %>% 
-      setView(lng = LNG, lat = LAT, zoom = ZOOM)
+    leafletProxy("map") %>%
+      setView(lng=LNG, lat=LAT, zoom=ZOOM)
   })
 }
 
